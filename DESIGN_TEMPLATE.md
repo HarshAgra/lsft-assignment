@@ -2,19 +2,19 @@
 
 ## Architecture
 
-The solution uses a single rule-based orchestrator implemented in `candidate.py`. The orchestrator receives the user prompt, identifies the intent using rule-based routing, and executes the required sequence of tools. Each workflow follows the required tool ordering while recording every tool call through the provided `Tools` wrapper.
+The solution uses a single rule-based orchestrator implemented in `candidate.py`. The orchestrator receives a user prompt, identifies the intent using deterministic rule-based routing, and executes the appropriate sequence of tools. Each workflow enforces the required tool ordering, handles validation and ambiguity where necessary, and records every tool invocation using the provided `Tools` wrapper.
 
 ```
                 User Prompt
                      |
                      v
-          +--------------------+
-          | Rule-based Router  |
-          +--------------------+
+          +----------------------+
+          | Rule-based Router    |
+          +----------------------+
                      |
-     -----------------------------------------
-     |        |        |        |            |
-  List     Optimise  Forecast  Compare   Target KPI
+     -------------------------------------------------------
+     |        |         |         |         |              |
+  Models   Optimise  Forecast  Compare  Current Budget  Target KPI
                      |
                      v
                Lifesight Tools
@@ -24,9 +24,9 @@ The solution uses a single rule-based orchestrator implemented in `candidate.py`
 
 ## Agent topology and why
 
-I used a single orchestrator instead of multiple agents because the assignment workflows are deterministic and tool-driven. A single agent is sufficient to identify user intent, execute the correct tool sequence, and return grounded responses.
+I implemented a single orchestration agent because the workflows are deterministic and entirely tool-driven. One orchestrator is sufficient to perform intent detection, validate user inputs, execute the required tool sequence, and return grounded responses.
 
-A multi-agent architecture would introduce unnecessary coordination overhead for this implementation. With more time, I would separate the system into an Intent Router, Planning Agent, and Tool Execution Agent.
+A multi-agent design would add unnecessary coordination overhead for this assignment. Given more time, I would separate the system into an Intent Router, Planning Agent, and Tool Execution Agent for better scalability and maintainability.
 
 ---
 
@@ -34,66 +34,76 @@ A multi-agent architecture would introduce unnecessary coordination overhead for
 
 ### Orchestration / ordering
 
-Implemented explicit workflows for each supported prompt. For optimisation workflows, `run_default_optimise` is always executed before `run_constrained_optimise`, satisfying the required dependency.
+Implemented explicit workflows for every prompt. Wherever required, `run_default_optimise` is always executed before `run_constrained_optimise`, and `forecast_revenue` is executed only after successful optimisation.
 
 ### Tool ambiguity (current_budget vs planner_budget; list vs details)
 
-Used `list_models` to identify the latest successful Revenue model. I avoided deprecated tools where applicable and preferred the canonical workflow.
+Used the canonical `get_current_budget` tool instead of the deprecated `get_planner_budget`. Used `list_models` to resolve the latest successful Revenue model whenever the user omitted the model ID.
 
 ### Token optimisation (the 19MB list, referencePoint, response curves)
 
-Instead of returning the complete model list, I returned only the relevant fields (`id`, `modelName`, `outcomeKPI`, `modelStatus`, `createdAt`) and displayed only the latest five models with the total count.
+Reduced the large model response to only the required fields (`id`, `modelName`, `outcomeKPI`, `modelStatus`, `createdAt`) and returned only the latest five models while preserving the total count.
 
-For optimisation responses, only the required "All Platforms" metrics were returned instead of the complete optimisation payload.
+Large optimisation responses were also reduced by extracting only the required "All Platforms" metrics instead of returning the complete optimisation payload.
 
 ### Latency / fewer LLM hops
 
-No LLM was used. All routing is deterministic using rule-based conditions, resulting in zero LLM calls and zero token usage.
+No LLM was used. All routing and orchestration were implemented deterministically, resulting in zero LLM calls and zero token consumption.
 
 ### Zero hallucination (g07, g08, g10)
 
-The implementation returns only values produced by the tools and does not fabricate any metrics. Error responses are propagated directly from the tools.
+The system never invents models, budgets, metrics, or business rules. Invalid model IDs return tool errors, missing information results in clarification questions, and business rules such as locked channels are obtained directly from `channel_metadata`.
 
 ### Grounding (no glossary tool; how you map terms→fields + spot ambiguity; g09)
 
-Business terms were mapped directly from tool outputs (for example, Revenue models and "All Platforms" optimisation response). No unsupported metrics were invented.
+Business terms are grounded entirely in tool outputs. Ambiguous requests such as "Show me conversions" trigger clarification instead of returning fabricated values. Revenue, optimisation results, and channel information are always obtained directly from tool responses.
 
 ### Param correctness / recovery (camelCase)
 
-Tool calls use the required API parameter names such as `mmmRequestId`, `constraintType`, and `totalBudget` as defined by the mock API.
+All tool calls use the required API parameter names such as `mmmRequestId`, `constraintType`, and `totalBudget`, avoiding parameter mismatches and ensuring compatibility with the provided APIs.
 
 ### Harness improvements
 
-Used the provided `Tools` wrapper for every tool invocation so that the harness automatically records tool traces for verification.
+Every tool invocation is executed through the provided `Tools` wrapper, allowing the harness to verify tool usage, execution order, and orchestration automatically.
 
 ---
 
 ## Trade-offs and what I cut
 
-To meet the assignment timeline, I implemented a deterministic rule-based orchestrator instead of an LLM planner. Code reuse through helper functions was limited, leading to some duplicated logic across prompts.
+To maximise correctness within the assignment timeline, I implemented a deterministic rule-based orchestrator instead of an LLM-based planner.
+
+This resulted in some repeated logic across workflows, particularly when identifying the latest Revenue model and executing optimisation pipelines.
 
 With another day, I would:
 
 - Refactor repeated logic into reusable helper functions.
-- Improve intent recognition to handle more prompt variations.
-- Implement clarification handling for ambiguous prompts.
-- Complete the remaining harness scenarios.
-- Add conversation memory and better error recovery.
+- Improve intent detection beyond keyword matching.
+- Support multi-turn conversations with conversation state.
+- Add richer natural language responses.
+- Improve robustness for unseen prompt variations.
 
 ---
 
 ## Results
 
 ```
-Structural checks passed: 5/12
+Structural checks passed: 12/12
 Total LLM hops: 0
 Total prompt tokens: 0
 Total completion tokens: 0
 ```
 
-Implemented prompts:
+### Supported workflows
+
 - Model listing
-- Latest Revenue model optimisation
-- Scenario comparison
-- Target KPI calculation
-- Core tool orchestration
+- Budget optimisation
+- Revenue forecasting
+- Multi-scenario comparison
+- Target KPI budget calculation
+- Current budget retrieval
+- Locked channel identification
+- Missing model detection
+- Missing budget clarification
+- Ambiguous metric clarification
+- Parameter recovery
+- End-to-end optimisation and forecasting
