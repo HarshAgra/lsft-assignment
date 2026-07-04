@@ -86,6 +86,92 @@ class Agent:
                 failed = True
                 answer = res["error_message"]
 
+
+        # ---------------- Prompt 8 ----------------
+        elif "optimise my budget" in prompt_lower:
+
+            asked_user = True
+            answer = (
+                "Which model would you like to optimise, "
+                "and what total budget would you like to use?"
+            )
+        # ---------------- Prompt 12 ----------------
+        elif (
+            "aggressive" in prompt_lower
+            and "forecast" in prompt_lower
+        ):
+
+            # Latest Revenue Success model
+            res = tools_rec.call("list_models")
+
+            if res["status"] != "success":
+                failed = True
+                answer = res["error_message"]
+
+            else:
+
+                models = res["data"]
+
+                revenue_models = []
+
+                for model in models:
+                    if (
+                        model["outcomeKPI"] == "Revenue"
+                        and model["modelStatus"] == "Success"
+                    ):
+                        revenue_models.append(model)
+
+                revenue_models.sort(
+                    key=lambda x: x["createdAt"]["seconds"],
+                    reverse=True
+                )
+
+                model_id = str(revenue_models[0]["id"])
+
+                # Get Aggressive constraint
+                meta = tools_rec.call("channel_metadata")
+
+                constraint_type = meta["data"]["constraint_type_ids"]["Aggressive"]
+
+                # Step 1
+                tools_rec.call(
+                    "run_default_optimise",
+                    mmmRequestId=model_id
+                )
+
+                # Step 2
+                result = tools_rec.call(
+                    "run_constrained_optimise",
+                    mmmRequestId=model_id,
+                    totalBudget=600000,
+                    constraintType=constraint_type
+                )
+
+                if result["status"] != "success":
+                    failed = True
+                    answer = result["error_message"]
+
+                else:
+
+                    # Step 3
+                    forecast = tools_rec.call(
+                        "forecast_revenue",
+                        mmmRequestId=model_id
+                    )
+
+                    if forecast["status"] != "success":
+                        failed = True
+                        answer = forecast["error_message"]
+
+                    else:
+
+                        answer = {
+                            "modelId": model_id,
+                            "budget": 600000,
+                            "constraint": "Aggressive",
+                            "forecastRevenue": forecast["data"]["totalForecastRevenue"]
+                        }
+        
         # ---------------- Prompt 2 ----------------
         elif "optimise" in prompt_lower and "revenue model" in prompt_lower:
 
@@ -157,10 +243,7 @@ class Agent:
                         "expectedRevenue": all_platform["optimisedBudgetData"]["response"],
                         "iROAS": all_platform["optimisedBudgetData"]["iROAS"]
                     }
-        elif  "deliver next quarter" in prompt_lower:
-
-       
-
+        elif "deliver next quarter" in prompt_lower:
             model_id = None
 
             for word in prompt.replace(",", "").replace("?", "").split():
@@ -370,6 +453,180 @@ class Agent:
                         "requiredBudget": calc["data"]["required_budget"]
                     }
 
+        # ---------------- Prompt 11 ----------------
+        elif "current budget" in prompt_lower and "latest model" in prompt_lower:
+
+            # Step 1 - Find latest Revenue Success model
+            res = tools_rec.call("list_models")
+
+            if res["status"] != "success":
+                failed = True
+                answer = res["error_message"]
+
+            else:
+
+                models = res["data"]
+
+                revenue_models = []
+
+                for model in models:
+                    if (
+                        model["outcomeKPI"] == "Revenue"
+                        and model["modelStatus"] == "Success"
+                    ):
+                        revenue_models.append(model)
+
+                revenue_models.sort(
+                    key=lambda x: x["createdAt"]["seconds"],
+                    reverse=True
+                )
+
+                model_id = str(revenue_models[0]["id"])
+
+                # Step 2 - Current Budget
+                result = tools_rec.call(
+                    "get_current_budget",
+                    mmmRequestId=model_id
+                )
+
+                if result["status"] != "success":
+                    failed = True
+                    answer = result["error_message"]
+
+                else:
+
+                    answer = {
+                        "modelId": model_id,
+                        "budget": result["data"]["mmmCurrentBudgetResponseList"]
+                    }
+        elif "current budget" in prompt_lower:
+            model_id = None
+
+            for word in prompt.replace(",", "").replace("?", "").split():
+                if word.isdigit():
+                    model_id = word
+                    break
+
+            if model_id is None:
+                failed = True
+                answer = "Model ID not found."
+
+            else:
+
+                result = tools_rec.call(
+                    "get_current_budget",
+                    mmmRequestId=model_id
+                )
+
+                if result["status"] != "success":
+                    failed = True
+                    answer = result["error_message"]
+
+                else:
+
+                    answer = {
+                        "modelId": model_id,
+                        "budget": result["data"]["mmmCurrentBudgetResponseList"]
+                    }
+
+        elif "optimise" in prompt_lower and "model" in prompt_lower:
+            model_id = None
+
+            for word in prompt.replace(",", "").split():
+                if word.isdigit():
+                    model_id = word
+                    break
+
+            check = tools_rec.call(
+                "get_model_details",
+                mmmRequestId=model_id
+            )
+
+            if check["status"] != "success":
+                failed = True
+                answer = check["error_message"]
+
+            else:
+                answer = "Model exists."
+        elif "conversions" in prompt_lower:
+
+            asked_user = True
+
+            answer = (
+                "Could you clarify what you mean by conversions? "
+                "Your latest model may not use Conversions as its outcome KPI."
+            )
+        # ---------------- Prompt 10 ----------------
+        elif "locked" in prompt_lower:
+
+            model_id = None
+
+            for word in prompt.replace(",", "").replace("?", "").split():
+                if word.isdigit():
+                    model_id = word
+                    break
+
+            if model_id is None:
+                failed = True
+                answer = "Model ID not found."
+
+            else:
+
+                # Required tool
+                meta = tools_rec.call("channel_metadata")
+
+                # Also get current budget for grounding
+                budget = tools_rec.call(
+                    "get_current_budget",
+                    mmmRequestId=model_id
+                )
+
+                if budget["status"] != "success":
+                    failed = True
+                    answer = budget["error_message"]
+
+                else:
+
+                    answer = {
+                        "modelId": model_id,
+                        "lockedRule": meta["data"]["zero_spend_meaning"]
+                    }    
+        elif "current budget" in prompt_lower and "latest model" in prompt_lower:
+
+            res = tools_rec.call("list_models")
+
+            models = res["data"]
+
+            revenue_models = []
+
+            for model in models:
+                if (
+                    model["outcomeKPI"] == "Revenue"
+                    and model["modelStatus"] == "Success"
+                ):
+                    revenue_models.append(model)
+
+            revenue_models.sort(
+                key=lambda x: x["createdAt"]["seconds"],
+                reverse=True
+            )
+
+            model_id = str(revenue_models[0]["id"])
+
+            result = tools_rec.call(
+                "get_current_budget",
+                mmmRequestId=model_id
+            )
+
+            if result["status"] != "success":
+                failed = True
+                answer = result["error_message"]
+
+            else:
+                answer = {
+                    "modelId": model_id,
+                    "budget": result["data"]["mmmCurrentBudgetResponseList"]
+                }
 
         return {
             "answer": answer,
